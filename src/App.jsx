@@ -656,6 +656,18 @@ export default function App() {
           enter config above and click load dashboard
         </div>
       )}
+
+      <footer style={{
+        marginTop: "3rem",
+        paddingTop: "1.5rem",
+        borderTop: "0.5px solid #eee",
+        fontSize: 11,
+        color: "#bbb",
+        textAlign: "center",
+        letterSpacing: 0.2
+      }}>
+        deployed by claude by request from meshach
+      </footer>
     </div>
   );
 }

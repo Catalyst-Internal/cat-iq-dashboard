@@ -4,11 +4,13 @@ Single-pane live view of activity across multiple GitHub repos. Reads from the G
 
 Public, read-only, deployed to Vercel.
 
+**Live: https://github-dashboard-chi.vercel.app**
+
 ## Tabs
 
-- **overview** — repo cards with milestone progress and last commit
-- **issues** — open issues across all tracked repos, filterable by label (`agent`, `bug`, `infra`)
-- **activity** — combined timeline of issues, PRs, and commits
+- **overview** — repo cards with milestone progress, latest release, CI status, stars/forks, total commits, last commit
+- **issues** — open issues across all tracked repos, filterable by label (`feature`, `bug`, `agent`, `infra`)
+- **activity** — combined timeline of issues, PRs, commits, and releases
 - **board** — GitHub Projects v2 column counts per board (requires `read:project` scope)
 
 Auto-refreshes every 60 seconds.
