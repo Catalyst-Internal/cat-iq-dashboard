@@ -15,6 +15,11 @@ const ENV_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || "";
 const ENV_OWNER = import.meta.env.VITE_GITHUB_OWNER || "";
 const ENV_REPOS = import.meta.env.VITE_GITHUB_REPOS || "";
 
+// Hide the config form entirely when env vars are baked in. This is
+// the production case — visitors can't and shouldn't override anything.
+// Local dev (no env vars) still surfaces the form for self-service.
+const FULLY_CONFIGURED = !!(ENV_TOKEN && ENV_OWNER && ENV_REPOS);
+
 const REFRESH_INTERVAL_MS = 60_000;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -444,7 +449,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [labelFilter, setLabelFilter] = useState("all");
-  const [showSetup, setShowSetup] = useState(!ENV_TOKEN);
+  const [showSetup, setShowSetup] = useState(!FULLY_CONFIGURED);
 
   const load = useCallback(async (t = token, o = owner, r = reposStr) => {
     if (!t || !o || !r) return;
@@ -520,9 +525,11 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setShowSetup(s => !s)} style={{ fontSize: 12, padding: "5px 12px", border: "0.5px solid #ddd", borderRadius: 8, background: "transparent", cursor: "pointer" }}>
-            ⚙ config
-          </button>
+          {!FULLY_CONFIGURED && (
+            <button onClick={() => setShowSetup(s => !s)} style={{ fontSize: 12, padding: "5px 12px", border: "0.5px solid #ddd", borderRadius: 8, background: "transparent", cursor: "pointer" }}>
+              ⚙ config
+            </button>
+          )}
           <button onClick={() => load()} disabled={loading} style={{ fontSize: 12, padding: "5px 12px", border: "0.5px solid #ddd", borderRadius: 8, background: "transparent", cursor: "pointer" }}>
             {loading ? "loading…" : "↻ refresh"}
           </button>
