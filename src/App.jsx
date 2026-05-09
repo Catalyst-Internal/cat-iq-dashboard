@@ -86,34 +86,33 @@ async function fetchTotalCommits(owner, repo, token) {
   return Array.isArray(arr) ? arr.length : 0;
 }
 
+// Optional endpoints — never throw. Missing data is not a dashboard failure.
+// Returns null if scope is missing or no data exists.
 async function fetchLatestRelease(owner, repo, token) {
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/releases/latest`,
-    { headers: ghHeaders(token) }
-  );
-  // 404 means "no releases yet" — treat as null, not error
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const err = new Error(`${res.status}`);
-    err.status = res.status;
-    throw err;
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/releases/latest`,
+      { headers: ghHeaders(token) }
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
   }
-  return res.json();
 }
 
 async function fetchLatestWorkflowRun(owner, repo, token) {
-  // Default to main; gracefully handle if branch doesn't exist
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=1&branch=main`,
-    { headers: ghHeaders(token) }
-  );
-  if (!res.ok) {
-    const err = new Error(`${res.status}`);
-    err.status = res.status;
-    throw err;
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=1&branch=main`,
+      { headers: ghHeaders(token) }
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.workflow_runs?.[0] || null;
+  } catch {
+    return null;
   }
-  const json = await res.json();
-  return json.workflow_runs?.[0] || null;
 }
 
 async function fetchRepo(owner, repo, token) {
