@@ -5,7 +5,11 @@ import { useState, useEffect, useCallback } from "react";
 // and VITE_GITHUB_REPOS (comma-separated) as environment variables.
 // In dev, create a .env.local file with those same keys.
 // If env vars are present, the setup panel hides automatically.
-// Token needs: public_repo (REST) + read:project (GraphQL Projects v2).
+//
+// Fine-grained PAT permissions used:
+//   Repository:    Contents, Issues, Metadata, Pull requests = Read
+//                  Actions = Read (optional, enables CI status badge)
+//   Organization:  Projects = Read (enables board tab)
 
 const ENV_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || "";
 const ENV_OWNER = import.meta.env.VITE_GITHUB_OWNER || "";
@@ -30,6 +34,7 @@ function labelColor(name = "") {
   if (n.includes("agent") || n.includes("vera") || n.includes("ai")) return "#7F77DD";
   if (n.includes("bug")) return "#E24B4A";
   if (n.includes("infra") || n.includes("deploy")) return "#1D9E75";
+  if (n.includes("enhancement") || n.includes("feature")) return "#1D6FB8";
   return "#888780";
 }
 
@@ -39,30 +44,113 @@ function progressColor(pct) {
   return "#E24B4A";
 }
 
+function ciDotColor(conclusion, status) {
+  if (status === "in_progress" || status === "queued") return "#BA7517";
+  if (conclusion === "success") return "#1D9E75";
+  if (conclusion === "failure" || conclusion === "timed_out") return "#E24B4A";
+  if (conclusion === "cancelled" || conclusion === "skipped") return "#888780";
+  return null;
+}
+
 // ─── DATA FETCHING ────────────────────────────────────────────────────────────
+const ghHeaders = token => ({
+  Authorization: `token ${token}`,
+  Accept: "application/vnd.github.v3+json",
+});
+
+async function ghJson(url, token) {
+  const res = await fetch(url, { headers: ghHeaders(token) });
+  if (!res.ok) {
+    const err = new Error(`${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+async function fetchTotalCommits(owner, repo, token) {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`,
+    { headers: ghHeaders(token) }
+  );
+  if (!res.ok) {
+    const err = new Error(`${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  const link = res.headers.get("Link") || "";
+  const match = link.match(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/);
+  if (match) return parseInt(match[1], 10);
+  // No "last" link = single-page result; count what we got
+  const arr = await res.json();
+  return Array.isArray(arr) ? arr.length : 0;
+}
+
+async function fetchLatestRelease(owner, repo, token) {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/releases/latest`,
+    { headers: ghHeaders(token) }
+  );
+  // 404 means "no releases yet" — treat as null, not error
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = new Error(`${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+async function fetchLatestWorkflowRun(owner, repo, token) {
+  // Default to main; gracefully handle if branch doesn't exist
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=1&branch=main`,
+    { headers: ghHeaders(token) }
+  );
+  if (!res.ok) {
+    const err = new Error(`${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  const json = await res.json();
+  return json.workflow_runs?.[0] || null;
+}
+
 async function fetchRepo(owner, repo, token) {
-  const h = { Authorization: `token ${token}`, Accept: "application/vnd.github.v3+json" };
-  const [repoRes, issuesRes, prsRes, milestonesRes, commitsRes] = await Promise.all([
-    fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: h }),
-    fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=50`, { headers: h }),
-    fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=20`, { headers: h }),
-    fetch(`https://api.github.com/repos/${owner}/${repo}/milestones?state=open`, { headers: h }),
-    fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=10`, { headers: h }),
-  ]);
-  const [repoData, issues, prs, milestones, commits] = await Promise.all([
-    repoRes.ok ? repoRes.json() : {},
-    issuesRes.ok ? issuesRes.json() : [],
-    prsRes.ok ? prsRes.json() : [],
-    milestonesRes.ok ? milestonesRes.json() : [],
-    commitsRes.ok ? commitsRes.json() : [],
-  ]);
-  return {
-    repo, repoData,
-    issues: (Array.isArray(issues) ? issues : []).filter(i => !i.pull_request),
-    prs: Array.isArray(prs) ? prs : [],
-    milestones: Array.isArray(milestones) ? milestones : [],
-    commits: Array.isArray(commits) ? commits : [],
+  const tasks = {
+    repoData: ghJson(`https://api.github.com/repos/${owner}/${repo}`, token),
+    issues: ghJson(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=50`, token),
+    prs: ghJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=20`, token),
+    milestones: ghJson(`https://api.github.com/repos/${owner}/${repo}/milestones?state=open`, token),
+    commits: ghJson(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=10`, token),
+    totalCommits: fetchTotalCommits(owner, repo, token),
+    latestRelease: fetchLatestRelease(owner, repo, token),
+    latestWorkflowRun: fetchLatestWorkflowRun(owner, repo, token),
   };
+
+  const keys = Object.keys(tasks);
+  const settled = await Promise.allSettled(Object.values(tasks));
+
+  const out = { repo, _errors: {} };
+  keys.forEach((k, i) => {
+    const r = settled[i];
+    if (r.status === "fulfilled") {
+      out[k] = r.value;
+    } else {
+      out[k] = null;
+      out._errors[k] = r.reason?.status ? `${r.reason.status}` : "failed";
+    }
+  });
+
+  // Normalize types so downstream rendering is safe
+  out.repoData = out.repoData || {};
+  out.issues = (Array.isArray(out.issues) ? out.issues : []).filter(i => !i.pull_request);
+  out.prs = Array.isArray(out.prs) ? out.prs : [];
+  out.milestones = Array.isArray(out.milestones) ? out.milestones : [];
+  out.commits = Array.isArray(out.commits) ? out.commits : [];
+  out.totalCommits = typeof out.totalCommits === "number" ? out.totalCommits : null;
+
+  return out;
 }
 
 async function fetchProjects(owner, token) {
@@ -148,7 +236,7 @@ function MetricCard({ label, value }) {
   return (
     <div style={{ background: "#f5f5f3", borderRadius: 8, padding: "14px 16px" }}>
       <div style={{ fontSize: 12, color: "#888780", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 500 }}>{value}</div>
+      <div style={{ fontSize: 28, fontWeight: 500 }}>{value ?? "—"}</div>
     </div>
   );
 }
@@ -175,21 +263,80 @@ function MilestoneBar({ milestone }) {
 }
 
 function RepoCard({ data }) {
+  const repoData = data.repoData || {};
+  const release = data.latestRelease;
+  const workflow = data.latestWorkflowRun;
+  const errorKeys = Object.keys(data._errors || {});
+  const ciColor = ciDotColor(workflow?.conclusion, workflow?.status);
+
   return (
     <div style={{ background: "#fff", border: "0.5px solid #e0dfd8", borderRadius: 12, padding: "1rem 1.25rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <span style={{ fontWeight: 500 }}>📦 {data.repo}</span>
-        <span style={{ fontSize: 11, color: "#aaa", background: "#f5f5f3", padding: "2px 8px", borderRadius: 99 }}>
-          {data.repoData?.private ? "private" : "public"}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8 }}>
+        <span style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {repoData.html_url ? (
+            <a href={repoData.html_url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>
+              📦 {data.repo}
+            </a>
+          ) : <>📦 {data.repo}</>}
         </span>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+          {ciColor && (
+            <span
+              title={`CI: ${workflow?.conclusion || workflow?.status}${workflow?.head_branch ? ` on ${workflow.head_branch}` : ""}`}
+              style={{ width: 8, height: 8, borderRadius: "50%", background: ciColor }}
+            />
+          )}
+          {release?.tag_name && (
+            <a
+              href={release.html_url}
+              target="_blank"
+              rel="noreferrer"
+              title={`released ${relTime(release.published_at)}`}
+              style={{
+                fontSize: 11, color: "#1D6FB8", background: "#EAF2FA",
+                padding: "2px 8px", borderRadius: 99,
+                fontFamily: "ui-monospace, monospace", textDecoration: "none"
+              }}
+            >
+              {release.tag_name}
+            </a>
+          )}
+          {repoData.private !== undefined && (
+            <span style={{ fontSize: 11, color: "#aaa", background: "#f5f5f3", padding: "2px 8px", borderRadius: 99 }}>
+              {repoData.private ? "private" : "public"}
+            </span>
+          )}
+          {errorKeys.length > 0 && (
+            <span
+              title={`Failed endpoints: ${errorKeys.map(k => `${k} (${data._errors[k]})`).join(", ")}`}
+              style={{ fontSize: 14, color: "#BA7517", cursor: "help", lineHeight: 1 }}
+            >⚠</span>
+          )}
+        </div>
       </div>
-      <div style={{ display: "flex", gap: 16, marginBottom: 12 }}>
-        {[["issues", data.issues.length], ["PRs", data.prs.length], ["milestones", data.milestones.length]].map(([k, v]) => (
-          <span key={k} style={{ fontSize: 13, color: "#666" }}>
-            <strong style={{ color: "#222" }}>{v}</strong> {k}
-          </span>
-        ))}
+      <div style={{ display: "flex", gap: 14, marginBottom: 10, flexWrap: "wrap" }}>
+        {[
+          ["issues", data.issues.length],
+          ["PRs", data.prs.length],
+          ["milestones", data.milestones.length],
+          ["commits", data.totalCommits],
+          ["★", repoData.stargazers_count],
+          ["forks", repoData.forks_count],
+        ]
+          .filter(([_, v]) => v != null)
+          .map(([k, v]) => (
+            <span key={k} style={{ fontSize: 13, color: "#666" }}>
+              <strong style={{ color: "#222" }}>{v.toLocaleString()}</strong> {k}
+            </span>
+          ))}
       </div>
+      {(repoData.language || repoData.default_branch) && (
+        <div style={{ fontSize: 11, color: "#888780", marginBottom: 8 }}>
+          {repoData.language || "—"}
+          {repoData.default_branch && ` · ${repoData.default_branch}`}
+          {repoData.size != null && ` · ${(repoData.size / 1024).toFixed(1)} MB`}
+        </div>
+      )}
       {data.milestones.length > 0 && (
         <div style={{ borderTop: "0.5px solid #eee", paddingTop: 10 }}>
           {data.milestones.slice(0, 3).map(m => <MilestoneBar key={m.id} milestone={m} />)}
@@ -234,7 +381,7 @@ function IssueRow({ issue, repo }) {
 }
 
 function ActivityItem({ event }) {
-  const icons = { issue: "🔵", pr: "🟢", push: "⚪" };
+  const icons = { issue: "🔵", pr: "🟢", push: "⚪", release: "🏷️" };
   return (
     <div style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: "0.5px solid #eee" }}>
       <span style={{ fontSize: 12, marginTop: 2 }}>{icons[event.type] || "⚪"}</span>
@@ -321,10 +468,8 @@ export default function App() {
     }
   }, [token, owner, reposStr]);
 
-  // Auto-load if env vars present
   useEffect(() => { if (ENV_TOKEN && ENV_OWNER && ENV_REPOS) load(); }, []);
 
-  // Auto-refresh every 60s
   useEffect(() => {
     if (!results.length) return;
     const id = setInterval(() => load(), REFRESH_INTERVAL_MS);
@@ -334,16 +479,27 @@ export default function App() {
   const totalIssues = results.reduce((a, r) => a + r.issues.length, 0);
   const totalPRs = results.reduce((a, r) => a + r.prs.length, 0);
   const totalMilestones = results.reduce((a, r) => a + r.milestones.length, 0);
+  const totalCommits = results.reduce((a, r) => a + (r.totalCommits || 0), 0);
+
+  const reposWithErrors = results.filter(r => Object.keys(r._errors || {}).length > 0);
+  const reposFullyFailed = results.filter(r => !r.repoData?.id);
 
   const allIssues = results.flatMap(r => r.issues.map(i => ({ ...i, _repo: r.repo })));
+  const featureRequests = allIssues.filter(i =>
+    i.labels?.some(l => /enhancement|feature/i.test(l.name))
+  );
+
   const filteredIssues = labelFilter === "all"
     ? allIssues
-    : allIssues.filter(i => i.labels?.some(l => l.name.toLowerCase().includes(labelFilter)));
+    : labelFilter === "feature"
+      ? featureRequests
+      : allIssues.filter(i => i.labels?.some(l => l.name.toLowerCase().includes(labelFilter)));
 
   const activity = results.flatMap(r => [
     ...r.issues.map(i => ({ type: "issue", repo: r.repo, title: `#${i.number} ${i.title}`, date: i.created_at })),
     ...r.prs.map(p => ({ type: "pr", repo: r.repo, title: `#${p.number} ${p.title}`, date: p.created_at })),
     ...r.commits.map(c => ({ type: "push", repo: r.repo, title: c.commit?.message?.split("\n")[0], date: c.commit?.author?.date, author: c.commit?.author?.name })),
+    ...(r.latestRelease ? [{ type: "release", repo: r.repo, title: `${r.latestRelease.tag_name}${r.latestRelease.name ? ` — ${r.latestRelease.name}` : ""}`, date: r.latestRelease.published_at, author: r.latestRelease.author?.login }] : []),
   ]).sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const Tab = ({ id, label }) => (
@@ -356,7 +512,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "1.5rem", fontFamily: "system-ui, sans-serif", color: "#222" }}>
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "1.5rem", fontFamily: "system-ui, sans-serif", color: "#222" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 500, margin: 0 }}>project dashboard</h1>
@@ -379,7 +535,7 @@ export default function App() {
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 12 }}>connect to github</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
             <div>
-              <label style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 4 }}>token (public_repo + read:project)</label>
+              <label style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 4 }}>token (Contents/Issues/Metadata/PRs/Projects = Read)</label>
               <input type="password" value={token} onChange={e => setToken(e.target.value)} placeholder="ghp_..."
                 style={{ width: "100%", padding: "6px 10px", border: "0.5px solid #ccc", borderRadius: 8, fontSize: 13 }} />
             </div>
@@ -406,13 +562,28 @@ export default function App() {
         </div>
       )}
 
+      {results.length > 0 && reposFullyFailed.length > 0 && (
+        <div style={{ background: "#FCEBEB", color: "#A32D2D", borderRadius: 8, padding: "10px 14px", fontSize: 12, marginBottom: "1rem" }}>
+          ⚠ {reposFullyFailed.length} of {results.length} repos returned 404 on every endpoint
+          ({reposFullyFailed.map(r => r.repo).join(", ")}).
+          Check that the PAT is scoped to access these repos under the correct Resource owner.
+        </div>
+      )}
+
+      {results.length > 0 && reposWithErrors.length > 0 && reposFullyFailed.length === 0 && (
+        <div style={{ background: "#FFF8E5", color: "#7A5A00", borderRadius: 8, padding: "10px 14px", fontSize: 12, marginBottom: "1rem" }}>
+          ⚠ Some endpoints failed on {reposWithErrors.length} of {results.length} repos. Hover the ⚠ on each card for details.
+        </div>
+      )}
+
       {results.length > 0 && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: "1.5rem" }}>
-            <MetricCard label="repos tracked" value={results.length} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: "1.5rem" }}>
+            <MetricCard label="repos" value={results.length} />
             <MetricCard label="open issues" value={totalIssues} />
-            <MetricCard label="open pull requests" value={totalPRs} />
-            <MetricCard label="active milestones" value={totalMilestones} />
+            <MetricCard label="open PRs" value={totalPRs} />
+            <MetricCard label="milestones" value={totalMilestones} />
+            <MetricCard label="total commits" value={totalCommits ? totalCommits.toLocaleString() : "—"} />
           </div>
 
           <div style={{ borderBottom: "0.5px solid #eee", marginBottom: "1.25rem", display: "flex" }}>
@@ -423,7 +594,7 @@ export default function App() {
           </div>
 
           {activeTab === "overview" && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12 }}>
               {results.map(r => <RepoCard key={r.repo} data={r} />)}
             </div>
           )}
@@ -431,12 +602,18 @@ export default function App() {
           {activeTab === "issues" && (
             <>
               <div style={{ display: "flex", gap: 8, marginBottom: "1rem", flexWrap: "wrap" }}>
-                {["all", "agent", "bug", "infra"].map(f => (
+                {[
+                  ["all", allIssues.length],
+                  ["feature", featureRequests.length],
+                  ["bug", allIssues.filter(i => i.labels?.some(l => /bug/i.test(l.name))).length],
+                  ["agent", allIssues.filter(i => i.labels?.some(l => /agent/i.test(l.name))).length],
+                  ["infra", allIssues.filter(i => i.labels?.some(l => /infra|deploy/i.test(l.name))).length],
+                ].map(([f, count]) => (
                   <button key={f} onClick={() => setLabelFilter(f)} style={{
                     fontSize: 12, padding: "4px 12px", borderRadius: 99,
                     border: "0.5px solid #ccc", background: labelFilter === f ? "#f5f5f3" : "transparent",
                     fontWeight: labelFilter === f ? 500 : 400, cursor: "pointer"
-                  }}>{f}</button>
+                  }}>{f} ({count})</button>
                 ))}
               </div>
               {filteredIssues.length
