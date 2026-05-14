@@ -6,6 +6,8 @@ Public, read-only, deployed to Vercel.
 
 **Live: https://github-dashboard-chi.vercel.app**
 
+**For AI agents:** read [`AGENTS.md`](AGENTS.md) before editing. [GitHub Wiki home](https://github.com/Catalyst-Internal/github-dashboard/wiki). Versioning: [`VERSIONING.md`](VERSIONING.md).
+
 ## Tabs
 
 - **overview** — repo cards with milestone progress, latest release, CI status, stars/forks, total commits, last commit
