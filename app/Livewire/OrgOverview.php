@@ -13,6 +13,7 @@ use Livewire\Component;
 #[Layout('layouts.dashboard')]
 class OrgOverview extends Component
 {
+    /** Poll every 30s (handoff: ~30s refresh for org overview). */
     #[Poll(30)]
     public function render(): View
     {

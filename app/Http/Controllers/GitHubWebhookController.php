@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\SyncRoadmapJob;
 use App\Jobs\SyncStatusJob;
 use App\Jobs\SyncWikiJob;
+use App\Models\GithubWebhookEvent;
 use App\Models\Repository;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,6 +23,15 @@ class GitHubWebhookController extends Controller
         if ($repository) {
             $this->routeEvent($event, $payload, $repository);
         }
+
+        GithubWebhookEvent::create([
+            'repository_id' => $repository?->id,
+            'event' => $event !== '' ? $event : 'unknown',
+            'action' => is_string($payload['action'] ?? null) ? (string) $payload['action'] : null,
+            'github_delivery' => is_string($request->header('X-GitHub-Delivery'))
+                ? $request->header('X-GitHub-Delivery')
+                : null,
+        ]);
 
         return response()->json(['ok' => true]);
     }

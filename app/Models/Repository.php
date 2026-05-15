@@ -53,6 +53,11 @@ class Repository extends Model
         return $this->hasMany(RoadmapEntry::class);
     }
 
+    public function githubWebhookEvents(): HasMany
+    {
+        return $this->hasMany(GithubWebhookEvent::class);
+    }
+
     public function ownerAndRepo(): array
     {
         [$owner, $repo] = explode('/', $this->full_name, 2);

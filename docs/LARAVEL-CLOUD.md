@@ -31,6 +31,8 @@ After deploy, set the GitHub App webhook to:
 
 `https://<your-laravel-cloud-host>/webhooks/github`
 
+Each delivery is recorded in `github_webhook_events` (event name, optional action, optional `X-GitHub-Delivery`, linked `repository_id` when the payload includes `repository`).
+
 ## GitHub App private key on Laravel Cloud
 
 If `github:sync-org` fails with `InvalidKeyProvided` / `DECODER routines::unsupported`, the PEM in `GITHUB_APP_PRIVATE_KEY` is usually corrupted (newlines stripped, extra quotes, etc.).
@@ -48,6 +50,8 @@ base64 -w0 ./your-github-app.private-key.pem
 Paste the output into Cloud as `GITHUB_APP_PRIVATE_KEY_BASE64`. Leave `GITHUB_APP_PRIVATE_KEY` empty or remove it to avoid the wrong value winning.
 
 After changing env vars on Cloud, run **`php artisan config:clear`** (or redeploy) so Laravel does not use a cached config.
+
+If `github:sync-org` returns **401** with *`exp` must be a numeric value representing the future time*, the Cloud VM clock is usually **slow** relative to GitHub. This app issues JWTs with GitHub’s recommended **`iat` = now − 60s** and **`exp` = now + 10m** (UTC epoch). If it still fails, open a Laravel Cloud ticket to confirm **NTP** on the runtime.
 
 **Diagnose on the server:** deploy the latest app, then run **`php artisan github:verify-key`**. It prints which env vars are set, the PEM’s first line only, and whether OpenSSL + lcobucci accept the key—without dumping secrets.
 

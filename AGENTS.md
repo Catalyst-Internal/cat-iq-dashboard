@@ -11,7 +11,7 @@ Instructions for AI agents and humans working in **Catalyst-Internal/cat-iq-dash
 ## GitHub App
 
 - Service layer: `App\Services\GitHubAppService` (JWT, installation token cache, REST/GraphQL, raw file content).
-- Webhook: `POST /webhooks/github` — signature middleware only; no basic auth.
+- Webhook: `POST /webhooks/github` — signature middleware only; no basic auth. Deliveries are appended to `github_webhook_events` for audit.
 - Org sync: `php artisan github:sync-org` uses `GITHUB_ORG` (default `catalyst-internal`).
 
 ## Product rules

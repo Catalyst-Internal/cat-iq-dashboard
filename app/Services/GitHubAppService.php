@@ -176,12 +176,17 @@ class GitHubAppService
 
         $config = Configuration::forAsymmetricSigner($signer, $key, $key);
 
-        $now = new DateTimeImmutable;
+        // GitHub requires numeric Unix exp in the future on *their* clock. Use epoch
+        // instants (UTC) and GitHub's recommended skew: iat 60s in the past, exp up
+        // to 10m ahead — see https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app
+        $now = time();
+        $iat = new DateTimeImmutable('@'.(string) ($now - 60));
+        $exp = new DateTimeImmutable('@'.(string) ($now + 600));
 
         $token = $config->builder()
             ->issuedBy($appId)
-            ->issuedAt($now->modify('-30 seconds'))
-            ->expiresAt($now->modify('+9 minutes'))
+            ->issuedAt($iat)
+            ->expiresAt($exp)
             ->getToken($config->signer(), $config->signingKey());
 
         return $token->toString();
