@@ -1,41 +1,23 @@
-# github-dashboard
+# Cat IQ Dashboard
 
-Single-pane live view of activity across multiple GitHub repos. Reads from the GitHub REST + GraphQL APIs directly from the browser, no backend.
+Internal Laravel dashboard for **catalyst-internal** — repo status, milestones, roadmap (`ROADMAP.md`), and GitHub wikis. Stack: Laravel 11, Livewire 3, Flux UI, Tailwind CSS 4, Postgres (Laravel Cloud) or SQLite locally.
 
-Public, read-only, deployed to Vercel.
+## Local setup
 
-**Live: https://github-dashboard-chi.vercel.app**
+1. `cp .env.example .env` and set `APP_KEY` (`php artisan key:generate`).
+2. Configure GitHub App env vars (`GITHUB_*`) and dashboard basic auth (`DASHBOARD_AUTH_*`). For local dev you may leave `DASHBOARD_AUTH_*` empty to skip basic auth (only when `APP_ENV=local`).
+3. `composer install` then `npm install` then `npm run build` (or `npm run dev`).
+4. `touch database/database.sqlite` (if using SQLite) and `php artisan migrate`.
+5. Run `php artisan github:sync-org` with valid GitHub App credentials, then `php artisan queue:work` to process `SyncRepoJob` / child jobs.
 
-**For AI agents:** read [`AGENTS.md`](AGENTS.md) before editing. [GitHub Wiki home](https://github.com/Catalyst-Internal/github-dashboard/wiki). Versioning: [`VERSIONING.md`](VERSIONING.md).
+## Deploy (Laravel Cloud)
 
-## Tabs
+See [docs/LARAVEL-CLOUD.md](docs/LARAVEL-CLOUD.md) for queue worker, scheduler, deploy commands (`php artisan migrate --force`, `php artisan github:sync-org`), webhook URL, and Flux private Composer auth if you use Flux Pro.
 
-- **overview** — repo cards with milestone progress, latest release, CI status, stars/forks, total commits, last commit
-- **issues** — open issues across all tracked repos, filterable by label (`feature`, `bug`, `agent`, `infra`)
-- **activity** — combined timeline of issues, PRs, commits, and releases
-- **board** — GitHub Projects v2 column counts per board (requires `read:project` scope)
+## Webhook
 
-Auto-refreshes every 60 seconds.
+`POST /webhooks/github` — CSRF-exempt, `X-Hub-Signature-256` verified. Point the GitHub App webhook to `https://<your-cloud-host>/webhooks/github`.
 
-## Local dev
+## Agents
 
-```bash
-nvm use 20
-cp .env.example .env.local
-# fill in VITE_GITHUB_TOKEN, VITE_GITHUB_OWNER, VITE_GITHUB_REPOS
-npm install
-npm run dev
-```
-
-## Token scopes
-
-Generate a fine-grained or classic PAT with:
-
-- `public_repo` — REST endpoints
-- `read:project` — GraphQL Projects v2
-
-Fine-grained PATs need: Contents (read), Issues (read), Metadata (read), Pull requests (read), and Projects (read) at the org level.
-
-## Deploy (Vercel)
-
-Connect the repo to Vercel. Set the same three env vars in the Vercel project settings. Auto-deploys on push to `main`.
+See [AGENTS.md](AGENTS.md) for repository workflow expectations.
