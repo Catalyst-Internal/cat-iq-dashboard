@@ -31,6 +31,33 @@ After deploy, set the GitHub App webhook to:
 
 `https://<your-laravel-cloud-host>/webhooks/github`
 
+## GitHub App private key on Laravel Cloud
+
+If `github:sync-org` fails with `InvalidKeyProvided` / `DECODER routines::unsupported`, the PEM in `GITHUB_APP_PRIVATE_KEY` is usually corrupted (newlines stripped, extra quotes, etc.).
+
+**Recommended:** set **`GITHUB_APP_PRIVATE_KEY_BASE64`** to the base64 encoding of the **entire** `.pem` file (one line, no spaces):
+
+```bash
+# macOS
+base64 -i ./your-github-app.private-key.pem | tr -d '\n'
+
+# GNU/Linux
+base64 -w0 ./your-github-app.private-key.pem
+```
+
+Paste the output into Cloud as `GITHUB_APP_PRIVATE_KEY_BASE64`. Leave `GITHUB_APP_PRIVATE_KEY` empty or remove it to avoid the wrong value winning.
+
+After changing env vars on Cloud, run **`php artisan config:clear`** (or redeploy) so Laravel does not use a cached config.
+
+**Diagnose on the server:** deploy the latest app, then run **`php artisan github:verify-key`**. It prints which env vars are set, the PEM’s first line only, and whether OpenSSL + lcobucci accept the key—without dumping secrets.
+
+If it still fails, convert PKCS#1 → PKCS#8 and base64 that file:
+
+```bash
+openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt -in app.pem -out app-pkcs8.pem
+base64 -i app-pkcs8.pem | tr -d '\n'
+```
+
 ## Environment variables
 
-Mirror Cloud values locally for debugging: `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `DASHBOARD_AUTH_USER`, `DASHBOARD_AUTH_PASSWORD`, database credentials, `APP_KEY` (never regenerate on Cloud if already set).
+Mirror Cloud values locally for debugging: `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY` or `GITHUB_APP_PRIVATE_KEY_BASE64`, `GITHUB_WEBHOOK_SECRET`, `DASHBOARD_AUTH_USER`, `DASHBOARD_AUTH_PASSWORD`, database credentials, `APP_KEY` (never regenerate on Cloud if already set).

@@ -165,12 +165,11 @@ class GitHubAppService
     private function createJwt(): string
     {
         $appId = (string) config('github.app_id');
-        $pem = (string) config('github.private_key');
-        if ($appId === '' || $pem === '') {
-            throw new RuntimeException('GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY must be set.');
+        if ($appId === '') {
+            throw new RuntimeException('GITHUB_APP_ID must be set.');
         }
 
-        $pem = str_replace('\\n', "\n", $pem);
+        $pem = $this->loadGithubAppPrivateKeyPem();
 
         $signer = new Sha256;
         $key = InMemory::plainText($pem);
@@ -186,6 +185,101 @@ class GitHubAppService
             ->getToken($config->signer(), $config->signingKey());
 
         return $token->toString();
+    }
+
+    /**
+     * GitHub App PEM in env is often mangled on PaaS (newlines, quotes). Prefer
+     * GITHUB_APP_PRIVATE_KEY_BASE64 (base64 of the full .pem file) on Laravel Cloud.
+     */
+    private function loadGithubAppPrivateKeyPem(): string
+    {
+        $b64 = trim((string) config('github.private_key_base64'));
+        if ($b64 !== '') {
+            $b64 = preg_replace('/\s+/', '', $b64);
+            $decoded = base64_decode($b64, true);
+            if ($decoded === false || $decoded === '') {
+                throw new RuntimeException('GITHUB_APP_PRIVATE_KEY_BASE64 is not valid base64.');
+            }
+
+            return $this->normalizePemLineEndings($decoded);
+        }
+
+        $pem = trim((string) config('github.private_key'));
+        if ($pem === '') {
+            throw new RuntimeException('Set GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_BASE64.');
+        }
+
+        if ((str_starts_with($pem, '"') && str_ends_with($pem, '"'))
+            || (str_starts_with($pem, "'") && str_ends_with($pem, "'"))) {
+            $pem = substr($pem, 1, -1);
+        }
+
+        return $this->normalizePemLineEndings($pem);
+    }
+
+    private function normalizePemLineEndings(string $pem): string
+    {
+        $pem = str_replace(['\\n', "\r\n", "\r"], "\n", $pem);
+
+        return rtrim($pem, "\n")."\n";
+    }
+
+    /**
+     * Safe diagnostics for Cloud/support: no PEM or key material is printed.
+     *
+     * @return array{
+     *     source: 'base64'|'pem'|'none',
+     *     base64_env_length?: int,
+     *     decoded_length?: int,
+     *     pem_first_line: string|null,
+     *     openssl_loadable: bool,
+     *     lcobucci_loadable: bool,
+     *     error?: string|null
+     * }
+     */
+    public function diagnoseGithubAppPrivateKey(): array
+    {
+        $b64Raw = trim((string) config('github.private_key_base64'));
+        $pemRaw = trim((string) config('github.private_key'));
+        $source = $b64Raw !== '' ? 'base64' : ($pemRaw !== '' ? 'pem' : 'none');
+
+        $out = [
+            'source' => $source,
+            'pem_first_line' => null,
+            'openssl_loadable' => false,
+            'lcobucci_loadable' => false,
+            'error' => null,
+        ];
+
+        if ($source === 'base64') {
+            $out['base64_env_length'] = strlen(preg_replace('/\s+/', '', $b64Raw));
+        }
+
+        try {
+            $pem = $this->loadGithubAppPrivateKeyPem();
+        } catch (\Throwable $e) {
+            $out['error'] = $e->getMessage();
+
+            return $out;
+        }
+
+        $out['decoded_length'] = strlen($pem);
+        $lines = explode("\n", trim($pem));
+        $out['pem_first_line'] = $lines[0] ?? null;
+
+        $k = @openssl_pkey_get_private($pem);
+        $out['openssl_loadable'] = $k !== false;
+
+        try {
+            $signer = new Sha256;
+            $key = InMemory::plainText($pem);
+            Configuration::forAsymmetricSigner($signer, $key, $key);
+            $out['lcobucci_loadable'] = true;
+        } catch (\Throwable) {
+            $out['lcobucci_loadable'] = false;
+        }
+
+        return $out;
     }
 
     private function defaultHeaders(): array
