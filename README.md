@@ -1,5 +1,7 @@
 # Cat IQ Dashboard
 
+**Laravel Cloud POC** for org-wide GitHub visibility. Canonical integration target: [`cat-iq-website` `apps/backend/`](https://github.com/Catalyst-Internal/cat-iq-website) (monorepo copy lives in local `Catalyst IQ Website/apps/backend/`).
+
 Internal Laravel dashboard for **catalyst-internal** — repo status, milestones, roadmap (`ROADMAP.md`), and GitHub wikis. Stack: Laravel 11, Livewire 3, Flux UI, Tailwind CSS 4, Postgres (Laravel Cloud) or SQLite locally.
 
 ## Local setup
